@@ -32,6 +32,8 @@ extern crate alloc;
 // fifo_full_threshold (RX)
 const READ_BUF_SIZE: usize = 64;
 
+const DEBUG_LEVEL: usize = 0;
+
 #[embassy_executor::task]
 async fn writer(mut tx: UartTx<'static, Async>) {
     info!("Starting UART writer...");
@@ -41,9 +43,12 @@ async fn writer(mut tx: UartTx<'static, Async>) {
         for n in 0..=255 {
             Write::write(&mut tx, &wbuf[0..=n]).await.unwrap();
             Write::flush(&mut tx).await.unwrap();
-            warn!("Wrote: {}", n + 1);
+            if DEBUG_LEVEL > 3 {
+                warn!("Wrote: {}", n + 1);
+            }
             Timer::after(Duration::from_millis(100)).await;
         }
+        Timer::after(Duration::from_millis(1000)).await;
     }
 }
 
@@ -61,36 +66,41 @@ async fn reader(mut rx: UartRx<'static, Async>, id: &'static str) {
 
         match r {
             Ok(len) => {
+                info!("Read[{}]: len: {} [0]={}", id, len, rbuf[0]);
                 for n in 0..len {
                     if n == 0 {
                         if rbuf[0] == 0 {
                             current_iteration += 1;
                             expected = 0;
                             failed = false;
-                            info!(
-                                "Read[{}]: {} of {} for {}",
-                                id,
-                                len,
-                                (current_iteration) % 256,
-                                (current_iteration)
-                            );
+                            if DEBUG_LEVEL > 3 {
+                                info!(
+                                    "Read[{}]: {} of {} for {}",
+                                    id,
+                                    len,
+                                    (current_iteration) % 256,
+                                    (current_iteration)
+                                );
+                            }
                         } else {
-                            info!(
-                                "Read[{}]: {} => {} of {} for {}",
-                                id,
-                                len,
-                                len + expected,
-                                (current_iteration) % 256,
-                                (current_iteration)
-                            );
+                            if DEBUG_LEVEL > 2 {
+                                info!(
+                                    "Read[{}]: {} => {} of {} for {}",
+                                    id,
+                                    len,
+                                    len + expected,
+                                    (current_iteration) % 256,
+                                    (current_iteration)
+                                );
+                            }
                         }
                     }
 
                     if failed {
-                        expected = rbuf[n] as usize - n;
+                        expected = rbuf[n] as usize;
                         failed = false;
                     }
-                    if rbuf[n] != ((n + expected) as u8) {
+                    if rbuf[n] != (expected as u8) {
                         if rbuf[n] == 0 {
                             expected = 0;
                         } else {
@@ -107,8 +117,8 @@ async fn reader(mut rx: UartRx<'static, Async>, id: &'static str) {
                             continue 'outer;
                         }
                     }
+                    expected += 1;
                 }
-                expected += len;
             }
             Err(e) => {
                 error!("RX Error[{}]: {:?}", id, e);
