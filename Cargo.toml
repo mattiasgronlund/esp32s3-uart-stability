@@ -77,12 +77,12 @@ overflow-checks = false
 
 
 [patch.crates-io]
-esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal", branch = "main" }
-esp-hal = { git = "https://github.com/esp-rs/esp-hal", branch = "main" }
-esp-wifi = { git = "https://github.com/esp-rs/esp-hal", branch = "main" }
-esp-alloc = { git = "https://github.com/esp-rs/esp-hal", branch = "main" }
-esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", branch = "main" }
-esp-println = { git = "https://github.com/esp-rs/esp-hal", branch = "main" }
+esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal", rev = "d6e82d592c2cc649226f61295defc3fcd4d47292" }
+esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "d6e82d592c2cc649226f61295defc3fcd4d47292" }
+esp-wifi = { git = "https://github.com/esp-rs/esp-hal", rev = "d6e82d592c2cc649226f61295defc3fcd4d47292" }
+esp-alloc = { git = "https://github.com/esp-rs/esp-hal", rev = "d6e82d592c2cc649226f61295defc3fcd4d47292" }
+esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", rev = "d6e82d592c2cc649226f61295defc3fcd4d47292" }
+esp-println = { git = "https://github.com/esp-rs/esp-hal", rev = "d6e82d592c2cc649226f61295defc3fcd4d47292" }
 # esp-hal-embassy = { path = "../../esp-rs/esp-hal/esp-hal-embassy" }
 # esp-hal = { path = "../../esp-rs/esp-hal/esp-hal" }
 # esp-wifi = { path = "../../esp-rs/esp-hal/esp-wifi" }

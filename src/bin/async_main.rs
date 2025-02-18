@@ -32,7 +32,7 @@ extern crate alloc;
 // fifo_full_threshold (RX)
 const READ_BUF_SIZE: usize = 64;
 
-const DEBUG_LEVEL: usize = 0;
+const DEBUG_LEVEL: usize = 5;
 
 #[embassy_executor::task]
 async fn writer(mut tx: UartTx<'static, Async>) {
@@ -46,9 +46,9 @@ async fn writer(mut tx: UartTx<'static, Async>) {
             if DEBUG_LEVEL > 3 {
                 warn!("Wrote: {}", n + 1);
             }
-            Timer::after(Duration::from_millis(100)).await;
+            Timer::after(Duration::from_millis(50)).await;
         }
-        Timer::after(Duration::from_millis(1000)).await;
+        Timer::after(Duration::from_millis(200)).await;
     }
 }
 
@@ -66,9 +66,9 @@ async fn reader(mut rx: UartRx<'static, Async>, id: &'static str) {
 
         match r {
             Ok(len) => {
-                info!("Read[{}]: len: {} [0]={}", id, len, rbuf[0]);
-                for n in 0..len {
-                    if n == 0 {
+                //info!("Read[{}]: len: {} [0]={}", id, len, rbuf[0]);
+                for pos in 0..len {
+                    if pos == 0 {
                         if rbuf[0] == 0 {
                             current_iteration += 1;
                             expected = 0;
@@ -97,19 +97,20 @@ async fn reader(mut rx: UartRx<'static, Async>, id: &'static str) {
                     }
 
                     if failed {
-                        expected = rbuf[n] as usize;
+                        expected = rbuf[pos] as usize;
                         failed = false;
                     }
-                    if rbuf[n] != (expected as u8) {
-                        if rbuf[n] == 0 {
+                    if rbuf[pos] != (expected as u8) {
+                        if rbuf[pos] == 0 {
+                            current_iteration += 1;
                             expected = 0;
                         } else {
                             error!(
                                 "RX[{}]: expected {} got {} at {}/{} iteration {}",
                                 id,
-                                n + expected,
-                                rbuf[n],
-                                n,
+                                expected,
+                                rbuf[pos],
+                                pos,
                                 len,
                                 current_iteration
                             );
@@ -176,18 +177,18 @@ async fn main(spawner: Spawner) {
     let uart_config_0 = Config::default().with_rx(
         RxConfig::default()
             .with_fifo_full_threshold(READ_BUF_SIZE as u16)
-            .with_timeout(40),
+            .with_timeout(10),
     );
 
     let uart_config_1 = Config::default().with_rx(
         RxConfig::default()
             .with_fifo_full_threshold((READ_BUF_SIZE / 2) as u16)
-            .with_timeout(40),
+            .with_timeout(10),
     );
     let uart_config_2 = Config::default().with_rx(
         RxConfig::default()
             .with_fifo_full_threshold((READ_BUF_SIZE / 4) as u16)
-            .with_timeout(40),
+            .with_timeout(10),
     );
     let uart0 = Uart::new(peripherals.UART0, uart_config_0)
         .unwrap()
@@ -211,16 +212,20 @@ async fn main(spawner: Spawner) {
     let (rx1, tx1) = uart1.split();
     let (rx2, _tx2) = uart2.split();
 
-    spawner.spawn(reader(rx0, "UART_0")).unwrap();
-    spawner.spawn(reader(rx1, "UART_1")).unwrap();
-    spawner.spawn(writer(tx1)).unwrap();
-    spawner.spawn(reader(rx2, "UART_2")).unwrap();
 
     spawner.spawn(connection(controller)).unwrap();
     spawner.spawn(net_task(runner)).unwrap();
     spawner.spawn(tcp_connector(stack)).unwrap();
 
     //let mut i = 0;
+
+    Timer::after(Duration::from_millis(10000)).await;
+    spawner.spawn(reader(rx0, "UART_0")).unwrap();
+    spawner.spawn(reader(rx1, "UART_1")).unwrap();
+    spawner.spawn(reader(rx2, "UART_2")).unwrap();
+    Timer::after(Duration::from_millis(1000)).await;
+    spawner.spawn(writer(tx1)).unwrap();
+
 
     loop {
         // if i > 10000000 {
