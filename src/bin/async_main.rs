@@ -174,7 +174,7 @@ async fn reader(
         tx_ready_signal.wait().await;
         tx_ready_signal.reset();
         if uart_possible_polluted {
-            info!("{}: Sleeping {=u64:03ms}ms", id, DURATION_BEFORE_READING_OUT_GARBAGE.as_millis());
+            info!("{}: Sleeping {=u64:03ms}s", id, DURATION_BEFORE_READING_OUT_GARBAGE.as_millis());
             Timer::after(DURATION_BEFORE_READING_OUT_GARBAGE).await;
             read_garbage(id, &mut rx);
             uart_possible_polluted = false;
@@ -295,7 +295,7 @@ async fn reader(
 
                     log_history_reads(id, &read_info_log, total_reads, failure.at_reads);
                     error!(
-                        "{}: PROBLEM [{}] {=u64:08us}..{=u64:08us} Δ{=u64:06us}us len={} {=[u8]:02X} {=u8:02X}<{=u8:02X}> {=[u8]:02X}",
+                        "{}: PROBLEM [{}] {=u64:08us}..{=u64:08us} Δ{=u64:06us}s len={} {=[u8]:02X} {=u8:02X}<{=u8:02X}> {=[u8]:02X}",
                         id,failed_ix,info.called_at.as_micros(),
                         info.returned_at.as_micros(),
                         info.returned_at.duration_since(info.called_at).as_micros(),
