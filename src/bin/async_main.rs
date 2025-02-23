@@ -144,8 +144,8 @@ struct Failure {
 #[derive(defmt::Format)]
 struct FifoCnt {
     fifo_cnt: u16,
-    rd_addr: u16,
-    wr_addr: u16,
+    apb_rx_raddr: u16,
+    rx_waddr: u16,
 }
 
 struct ReadInfo {
@@ -174,8 +174,8 @@ struct UartStatistics {
 }
 
 fn read_fifo_cnt(rx: &mut UartRx<'static, Async>) -> FifoCnt {
-    let (fifo_cnt, rd_addr, wr_addr) = rx.rx_fifo_count_debug();
-    return FifoCnt { fifo_cnt, rd_addr, wr_addr}
+    let (fifo_cnt, apb_rx_raddr, rx_waddr) = rx.rx_fifo_count_debug();
+    return FifoCnt { fifo_cnt, apb_rx_raddr, rx_waddr}
 }
 
 async fn read_garbage(id: &str, rx: &mut UartRx<'static, Async>) {
@@ -685,8 +685,8 @@ async fn main(spawner: Spawner) {
             length: 0,
             content: [0u8; READ_BUFFER_SIZE],
             rx_error: None,
-            fifo_cnt_before: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0},
-            fifo_cnt_after: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0}
+            fifo_cnt_before: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0},
+            fifo_cnt_after: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0}
         })
     });
 
@@ -698,8 +698,8 @@ async fn main(spawner: Spawner) {
             length: 0,
             content: [0u8; READ_BUFFER_SIZE],
             rx_error: None,
-            fifo_cnt_before: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0},
-            fifo_cnt_after: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0}
+            fifo_cnt_before: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0},
+            fifo_cnt_after: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0}
         })
     });
 
@@ -711,8 +711,8 @@ async fn main(spawner: Spawner) {
             length: 0,
             content: [0u8; READ_BUFFER_SIZE],
             rx_error: None,
-            fifo_cnt_before: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0},
-            fifo_cnt_after: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0}
+            fifo_cnt_before: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0},
+            fifo_cnt_after: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0}
         })
     });
 
