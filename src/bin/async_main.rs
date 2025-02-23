@@ -4,8 +4,9 @@
 //spell: ignore SYSTIMER TIMG UART defmt dhcpv uninit
 use core::net::Ipv4Addr;
 
-use defmt::{error, info, trace};
+use alloc::vec::Vec;
 use defmt_rtt as _;
+use embassy_futures::select::select_array;
 use embassy_net::{tcp::TcpSocket, Runner, Stack, StackResources};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
 use embedded_io_async::Write;
@@ -40,51 +41,86 @@ const MAX_RETAINED_READS: usize = 15;
 const MAX_READS_AFTER_ERROR: usize = 3;
 const END_WITH_BYTES_PER_WRITE: usize = 256;
 const START_WITH_BYTES_PER_WRITE: usize = 128;
-const BYTES_PER_WRITE_STEP_RATE: usize = 128;
-const DURATION_BEFORE_READING_OUT_GARBAGE: Duration = Duration::from_millis(5000);
+const BYTES_PER_WRITE_STEP_RATE: usize = 64;
+const DURATION_BEFORE_READING_OUT_GARBAGE: Duration = Duration::from_millis(1000);
+const DURATION_BETWEEN_WRITE_STEPS: Duration = Duration::from_millis(10);
+const SLEEP_DURATION_BEFORE_WRITE_STARTS: Duration = Duration::from_millis(1000);
+const REQUIRED_NUMBER_OF_EMPTY_READS: usize = 10;
+const NUM_RECIEVERS: usize = 3;
+
+#[inline(never)]
+pub fn black_box<T>(dummy: T) -> T {
+    unsafe {
+        let ret = core::ptr::read_volatile(&dummy);
+        core::mem::forget(dummy);
+        ret
+    }
+}
+
 #[embassy_executor::task]
 async fn writer(
     mut tx: UartTx<'static, Async>,
-    rx_0_ready_signal: &'static Signal<NoopRawMutex, u8>,
-    tx_0_ready_signal: &'static Signal<NoopRawMutex, u8>,
-    rx_1_ready_signal: &'static Signal<NoopRawMutex, u8>,
-    tx_1_ready_signal: &'static Signal<NoopRawMutex, u8>,
-    rx_2_ready_signal: &'static Signal<NoopRawMutex, u8>,
-    tx_2_ready_signal: &'static Signal<NoopRawMutex, u8>,
+    rx_0_ready_signal: &'static Signal<NoopRawMutex, bool>,
+    tx_0_ready_signal: &'static Signal<NoopRawMutex, bool>,
+    rx_1_ready_signal: &'static Signal<NoopRawMutex, bool>,
+    tx_1_ready_signal: &'static Signal<NoopRawMutex, bool>,
+    rx_2_ready_signal: &'static Signal<NoopRawMutex, bool>,
+    tx_2_ready_signal: &'static Signal<NoopRawMutex, bool>,
 ) {
     let write_buf: [u8; END_WITH_BYTES_PER_WRITE + 1] = core::array::from_fn(|i| i as u8);
 
-
+    let rx_ready_signals: [&Signal<NoopRawMutex, bool>; NUM_RECIEVERS] =
+        [rx_0_ready_signal, rx_1_ready_signal, rx_2_ready_signal];
+    let tx_ready_signals: [&Signal<NoopRawMutex, bool>; NUM_RECIEVERS] =
+        [tx_0_ready_signal, tx_1_ready_signal, tx_2_ready_signal];
+    let mut ready: [bool; 3] = [false, false, false];
 
     loop {
-        info!("UART_TX: SIG Signal TX ready");
-        tx_0_ready_signal.signal(0);
-        tx_1_ready_signal.signal(1);
-        tx_2_ready_signal.signal(2);
+        loop {
+            let all_ready = ready.iter().all(|&is_ready| is_ready);
+            info!("UART_TX: SIG Signal TX {}", if all_ready { "ready" } else { "not ready" });
 
-        info!("UART_TX: SIG Wait for RX ready");
-        rx_0_ready_signal.wait().await;
-        rx_0_ready_signal.reset();
-        rx_1_ready_signal.wait().await;
-        rx_1_ready_signal.reset();
-        rx_2_ready_signal.wait().await;
-        rx_1_ready_signal.reset();
-        info!("UART_TX: SIG All RX ready");
+            tx_ready_signals.iter().for_each(|signal| signal.signal(all_ready));
+            if all_ready {
+                break;
+            }
+            info!("UART_TX: SIG Wait for RX ready");
+            let (is_ready, ix) = select_array([
+                rx_0_ready_signal.wait(),
+                rx_1_ready_signal.wait(),
+                rx_2_ready_signal.wait(),
+            ])
+            .await;
+            ready[ix] = is_ready;
+            info!("UART_TX: UART_{} is {}", ix, if ready[ix] { "ready" } else { "not ready" });
+            rx_ready_signals[ix].reset();
+        }
+        ready.fill(false);
 
-        info!("UART_TX: Start sending bytes");
-        for bytes_to_write in START_WITH_BYTES_PER_WRITE ..=END_WITH_BYTES_PER_WRITE {
-            if bytes_to_write % BYTES_PER_WRITE_STEP_RATE  == 0 {
-                info!("Write: 0..{}, len={}, {=[u8]:02X}", bytes_to_write, &write_buf[0..bytes_to_write].len(), &write_buf[0..bytes_to_write]);
+        info!("UART_TX: Start sending bytes in {=u64:ms}s...", SLEEP_DURATION_BEFORE_WRITE_STARTS.as_millis());
+        Timer::after(SLEEP_DURATION_BEFORE_WRITE_STARTS).await;
+
+        for bytes_to_write in START_WITH_BYTES_PER_WRITE..=END_WITH_BYTES_PER_WRITE {
+            if bytes_to_write % BYTES_PER_WRITE_STEP_RATE == 0 {
+                let buf = &write_buf[0..bytes_to_write];
+                if bytes_to_write == 1 {
+                    info!("UART_TX: Write: [0..{}], [{=u8:02X}]", buf.len(), buf[0]);
+                } else if bytes_to_write == 2 {
+                    info!("UART_TX: Write: [0..{}], {=[u8]:02X}", buf.len(), buf);
+                } else {
+                    info!("UART_TX: Write: [0..{}], [{=u8:02X}..{=u8:02X}]", buf.len(), buf[0], buf[buf.len() - 1]);
+                }
                 Write::write_all(&mut tx, &write_buf[0..bytes_to_write]).await.unwrap();
                 Write::flush(&mut tx).await.unwrap();
-                Timer::after(Duration::from_millis(10)).await;
-                }
+                info!("UART_TX: Sleep {=u64:03ms}s", DURATION_BETWEEN_WRITE_STEPS.as_millis());
+                Timer::after(DURATION_BETWEEN_WRITE_STEPS).await;
+            }
         }
 
         info!("UART_TX: Finished sending bytes, buffered flushed.");
     }
 }
-use defmt::Format;
+use defmt::{error, info, trace, Format};
 
 #[derive(Format)]
 struct Corruption {
@@ -105,12 +141,21 @@ struct Failure {
     reason: Reason,
 }
 
+#[derive(defmt::Format)]
+struct FifoCnt {
+    fifo_cnt: u16,
+    rd_addr: u16,
+    wr_addr: u16,
+}
+
 struct ReadInfo {
     called_at: embassy_time::Instant,
     returned_at: embassy_time::Instant,
     length: usize,
     rx_error: Option<RxError>,
     content: [u8; READ_BUFFER_SIZE],
+    fifo_cnt_before: FifoCnt,
+    fifo_cnt_after: FifoCnt,
 }
 
 use defmt;
@@ -128,20 +173,54 @@ struct UartStatistics {
     other: usize,
 }
 
-fn read_garbage(id: &str, rx: &mut UartRx<'static, Async>) {
+fn read_fifo_cnt(rx: &mut UartRx<'static, Async>) -> FifoCnt {
+    let (fifo_cnt, rd_addr, wr_addr) = rx.rx_fifo_count_debug();
+    return FifoCnt { fifo_cnt, rd_addr, wr_addr}
+}
+
+async fn read_garbage(id: &str, rx: &mut UartRx<'static, Async>) {
+    let mut empty_reads = 0;
+    info!("{}: Before reading garbage, fifo_cnt={}", id, rx.rx_fifo_count_debug());
     loop {
         let mut buffer: [u8; 256] = [0; 256];
-        let garbage = rx.read_buffered(&mut buffer);
+        let garbage = rx.read_buffered(&mut buffer);        
         match garbage {
             Ok(len) => {
                 if len == 0 {
-                    info!("{}: Read zero bytes of garbage, hope this is enough. len={} {=[u8]:02X}", id, len, buffer[0..len]);
-                    break;
+                    empty_reads += 1;
+                    if empty_reads <= REQUIRED_NUMBER_OF_EMPTY_READS {
+                        Timer::after(Duration::from_millis(10)).await;
+                    } else {
+                        info!(
+                            "{}: Read zero bytes of garbage, {} times, hope this is enough. len={} {=[u8]:02X}",
+                            id,
+                            empty_reads,
+                            len,
+                            buffer[0..len]
+                        );                        
+                        info!("{}: After reading garbage, fifo_cnt={}", id, rx.rx_fifo_count_debug());
+                        break;
+                    }
+                } else {
+                    if empty_reads > 0 {
+                        error!(
+                            "{}: Read got {} bytes of garbage {=[u8]:02X}, after read_buffered returned zero {} times",
+                            id,
+                            len,
+                            buffer[0..len],
+                            empty_reads
+                        );
+                    } else {
+                        info!("{}: Read got {} bytes of garbage {=[u8]:02X}", id, len, buffer[0..len]);
+                    }
                 }
-                info!("{}: Read {} bytes of garbage {=[u8]:02X}", id, len, buffer[0..len]);
             }
             Err(e) => {
-                info!("{}: Got error while reading out previous garbage: {}", id, e)
+                if empty_reads > 0 {
+                    error!("{}: Read got {}, after read_buffered returned zero {} times", id, e, empty_reads);
+                } else {
+                    info!("{}: Got error while reading out previous garbage: {}", id, e)
+                }
             }
         }
     }
@@ -152,8 +231,9 @@ async fn reader(
     mut rx: UartRx<'static, Async>,
     read_info_log: &'static mut [ReadInfo; MAX_RETAINED_READS],
     id: &'static str,
-    rx_ready_signal: &'static Signal<NoopRawMutex, u8>,
-    tx_ready_signal: &'static Signal<NoopRawMutex, u8>,
+    rx_ready_signal: &'static Signal<NoopRawMutex, bool>,
+    tx_ready_signal: &'static Signal<NoopRawMutex, bool>,
+    rx_interruped: &'static Signal<NoopRawMutex, bool>,
 ) {
     info!("Starting UART reader {}...", id);
 
@@ -169,39 +249,59 @@ async fn reader(
     };
 
     let mut uart_possible_polluted = true;
+
     loop {
-        info!("{}: SIG Wait for TX ready", id);
-        tx_ready_signal.wait().await;
-        tx_ready_signal.reset();
         if uart_possible_polluted {
-            info!("{}: Sleeping {=u64:03ms}s", id, DURATION_BEFORE_READING_OUT_GARBAGE.as_millis());
+            info!(
+                "{}: Sleeping {=u64:03ms}s, before reading out garbage...",
+                id,
+                DURATION_BEFORE_READING_OUT_GARBAGE.as_millis()
+            );
             Timer::after(DURATION_BEFORE_READING_OUT_GARBAGE).await;
-            read_garbage(id, &mut rx);
+            read_garbage(id, &mut rx).await;
             uart_possible_polluted = false;
         }
         if stats.iterations > 0 {
-           info!("{} STATISTICS: {}", id, stats);
+            info!("{} STATISTICS: {}", id, stats);
         }
 
+        info!("{}: SIG Signal RX ready=true", id);
+        rx_ready_signal.signal(true);
 
-        info!("{}: SIG Signal RX ready", id);
-        rx_ready_signal.signal(1);
+        info!("{}: SIG Wait for all ready", id);
+        loop {
+            let all_ready = tx_ready_signal.wait().await;
+            tx_ready_signal.reset();
+            if all_ready {
+                break;
+            }
+        }
+
         //let mut has_checked_for_corrupted_data_in_first_byte = false;
-        let mut max_value_in_iteration: usize = START_WITH_BYTES_PER_WRITE -1;
-        let mut expected:usize = 0;
+        let mut max_value_in_iteration: usize = START_WITH_BYTES_PER_WRITE - 1;
+        let mut expected: usize = 0;
         let mut total_reads = 0;
         let mut possible_failure: Option<Failure> = None;
-
+        let mut total_bytes_read = 0;
         'next_row: loop {
             let buf = &mut read_info_log[total_reads % MAX_RETAINED_READS];
             buf.called_at = embassy_time::Instant::now();
+            buf.fifo_cnt_before = read_fifo_cnt(&mut rx);
             let read_result = embedded_io_async::Read::read(&mut rx, &mut buf.content).await;
+            buf.fifo_cnt_after = read_fifo_cnt(&mut rx);
             buf.returned_at = embassy_time::Instant::now();
 
             match read_result {
                 Ok(len) => {
+                    total_bytes_read += len;
                     let content = buf.content;
-                    trace !("{}: READ: 0..{}, len={}, {=[u8]:02X}", id, len, content[0..len].len(), content[0..len]);
+                    trace!(
+                        "{}: READ: 0..{=usize:03}, len={=usize:03}, {=[u8]:02X}",
+                        id,
+                        len,
+                        content[0..len].len(),
+                        content[0..len]
+                    );
 
                     buf.rx_error = None;
                     buf.length = len;
@@ -216,24 +316,28 @@ async fn reader(
                                     max_value_in_iteration: max_value_in_iteration as u8,
                                 }),
                             });
-                            trace!("{}: Not what one would expect {}, actual: {}, max_value_in_iteration: {}",
-                                id, expected, content[pos], max_value_in_iteration);
+                            trace!(
+                                "{}: Not what one would expect {}, actual: {}, max_value_in_iteration: {}",
+                                id,
+                                expected,
+                                content[pos],
+                                max_value_in_iteration
+                            );
                             trace!("{}: CONCLUSION Found corrupt data", id);
                             break 'next_row;
                         }
                         if expected == max_value_in_iteration {
                             let bytes_written = max_value_in_iteration + 1;
-                            if (bytes_written + BYTES_PER_WRITE_STEP_RATE ) > END_WITH_BYTES_PER_WRITE {
+                            if (bytes_written + BYTES_PER_WRITE_STEP_RATE) > END_WITH_BYTES_PER_WRITE {
                                 trace!("{}: CONCLUSION Read all data without errors", id);
                                 break 'next_row;
                             }
-                            trace!("{}: Start next iteration, i.e set expected to 0 when expected: {}, actual: {}, max_value_in_iteration: {}",
-                                id, expected, content[pos], max_value_in_iteration);
+                            trace!("{}: Start next iteration, i.e set expected to 0 when expected: {}, actual: {}, max_value_in_iteration: {}", id, expected, content[pos], max_value_in_iteration);
                             expected = 0;
                             max_value_in_iteration += BYTES_PER_WRITE_STEP_RATE;
+                        } else {
+                            expected += 1
                         }
-
-                        expected += 1
                     }
                 }
                 Err(e) => {
@@ -247,12 +351,14 @@ async fn reader(
                     break 'next_row;
                 }
             }
-            // if expected == END_WITH_BYTES_PER_WRITE {
-            //     info!("{}: CONCLUSION Read all data without errors", id);
-            //     break 'next_row;
-            // }
+
             total_reads += 1;
         }
+
+        rx_ready_signal.signal(false);
+        tx_ready_signal.wait().await;
+        tx_ready_signal.reset();
+
         if let Some(failure) = possible_failure {
             uart_possible_polluted = true;
             for _n in 0..MAX_READS_AFTER_ERROR {
@@ -279,55 +385,134 @@ async fn reader(
                         _ => stats.other += 1,
                     }
 
-                    log_history_reads(id, &read_info_log, total_reads, failure.at_reads);
+                    log_history_reads(id, &read_info_log, total_reads, failure.at_reads).await;
                     error!("{}: PROBLEM {}", id, rx_error);
-                    log_future_reads(id, &read_info_log, total_reads, failure.at_reads);
+                    log_future_reads(id, &read_info_log, total_reads, failure.at_reads).await;
                 }
                 Reason::Corruption(corruption) => {
                     stats.corrupted_data += 1;
                     error!(
                         "{}: Corrupted at {}, actual {:02X}, expected {:02X}, max_value_in_iteration {:02X}",
-                        id, corruption.pos_in_buffer, corruption.actual, corruption.expected, corruption.max_value_in_iteration);
+                        id,
+                        corruption.pos_in_buffer,
+                        corruption.actual,
+                        corruption.expected,
+                        corruption.max_value_in_iteration
+                    );
+
                     let failed_ix = failure.at_reads % MAX_RETAINED_READS;
                     let info = &read_info_log[failed_ix];
                     let left_of = &info.content[..corruption.pos_in_buffer];
                     let right_of = &info.content[corruption.pos_in_buffer + 1..info.length];
 
-                    log_history_reads(id, &read_info_log, total_reads, failure.at_reads);
+                    log_history_reads(id, &read_info_log, total_reads, failure.at_reads).await;
                     error!(
-                        "{}: PROBLEM [{}] {=u64:08us}..{=u64:08us} Δ{=u64:06us}s len={} {=[u8]:02X} {=u8:02X}<{=u8:02X}> {=[u8]:02X}",
-                        id,failed_ix,info.called_at.as_micros(),
+                        "{}: PROBLEM [{}] {=u64:08us}..{=u64:08us} Δ{=u64:06us}s before:{}, after:{}, len={=usize:03} {=[u8]:02X} {=u8:02X}<{=u8:02X}> {=[u8]:02X}",
+                        id,
+                        failed_ix,
+                        info.called_at.as_micros(),
                         info.returned_at.as_micros(),
                         info.returned_at.duration_since(info.called_at).as_micros(),
+                        info.fifo_cnt_before, info.fifo_cnt_after,
+
                         info.length,
                         left_of,
-                        corruption.actual, corruption.expected,
+                        corruption.actual,
+                        corruption.expected,
                         right_of
                     );
-                    log_future_reads(id, &read_info_log, total_reads, failure.at_reads);
+                    log_future_reads(id, &read_info_log, total_reads, failure.at_reads).await;
                 }
             }
+        } else  {
+            info!("{}: Successfully read {} bytes", id, total_bytes_read)
         }
 
         stats.iterations += 1;
     }
 }
 
-fn log_read(id: &str, context:&str, row: usize, info: &ReadInfo) {
-    info!(
-        "{}: {} [{}] {=u64:08us}..{=u64:08us} Δ{=u64:06us} len={} {=[u8]:02X}",
-        id,
-        context,
-        row,
-        info.called_at.as_micros(),
-        info.returned_at.as_micros(),
-        info.returned_at.duration_since(info.called_at).as_micros(),
-        info.length,
-        &info.content[..info.length]
-    );
+struct ContinousRange {
+    start: usize,
+    end: usize,
 }
 
-fn log_history_reads(
+fn log_read(id: &str, context: &str, row: usize, info: &ReadInfo) {
+    let mut parts:Vec<ContinousRange> = Vec::new();
+    
+    
+    let logged = if info.length > 0 {
+        let mut prev:usize = info.content[0] as usize;
+        let mut part_start = 0;        
+        for i in 1..info.length {            
+            if info.content[i] as usize != prev as usize + 1 {
+                info!("{}: Push range: {}, {}, {}",id, i, info.content[i], prev +1);
+                parts.push(ContinousRange {start: part_start, end: i});
+                part_start = i+1;
+                prev = info.content[i] as usize -1;
+            }
+            prev+=1;
+        }
+        parts.push(ContinousRange {start: part_start, end: info.length-1});
+    
+        
+        match parts.len() {
+            1 =>    {    info!(
+                "{}: {} [{}] {=u64:08us}..{=u64:08us} Δ{=u64:06us}s before:{}, after:{}, len={=usize:03} [{=u8:02X}..{=u8:02X}]",
+                id,
+                context,
+                row,
+                info.called_at.as_micros(),
+                info.returned_at.as_micros(),
+                info.returned_at.duration_since(info.called_at).as_micros(),
+                info.fifo_cnt_before, info.fifo_cnt_after,
+                info.length,
+                &info.content[parts[0].start],
+                &info.content[parts[0].end],
+                
+            ); true},
+            2 =>      {  info!(
+                "{}: {} [{}] {=u64:08us}..{=u64:08us} Δ{=u64:06us}s before:{}, after:{}, len={=usize:03} [{=u8:02X}..{=u8:02X}], [{=u8:02X}..{=u8:02X}]",
+                id,
+                context,
+                row,
+                info.called_at.as_micros(),
+                info.returned_at.as_micros(),
+                info.returned_at.duration_since(info.called_at).as_micros(),
+                info.fifo_cnt_before, info.fifo_cnt_after,
+                info.length,
+                &info.content[parts[0].start],
+                &info.content[parts[0].end],
+                &info.content[parts[1].start],
+                &info.content[parts[1].end],
+            ); true},
+            n => {
+                info!("{}: To many parts: {}", id, n);
+                false
+            }            
+        }
+    } else {
+        false
+    };
+    if !logged {
+        info!(
+            "{}: {} [{}] {=u64:08us}..{=u64:08us} Δ{=u64:06us}s before:{}, after:{}, len={=usize:03} {=[u8]:02X}",
+            id,
+            context,
+            row,
+            info.called_at.as_micros(),
+            info.returned_at.as_micros(),
+            info.returned_at.duration_since(info.called_at).as_micros(),
+            info.fifo_cnt_before, info.fifo_cnt_after,
+            info.length,
+            &info.content[..info.length]
+            );
+        }
+    }
+
+
+
+async fn log_history_reads(
     id: &str,
     read_info_log: &[ReadInfo; MAX_RETAINED_READS],
     _total_reads: usize,
@@ -335,35 +520,46 @@ fn log_history_reads(
 ) {
     let last_history_ix = failed_at_total_reads;
     let max_history_size = MAX_RETAINED_READS - MAX_READS_AFTER_ERROR - 1;
+    info!("{}: max_history_size = MAX_RETAINED_READS - MAX_READS_AFTER_ERROR - 1", id);
+    info!(
+        "{}: {=usize:016} = {=usize:018} - {=usize:021} - 1",
+        id, max_history_size, MAX_RETAINED_READS, MAX_READS_AFTER_ERROR
+    );
     if last_history_ix < max_history_size {
+        info!("{}: last_history_ix < max_history_size", id);
+        info!("{}: for i in 0..{}", id, last_history_ix);
         for i in 0..last_history_ix {
-            log_read(id, "HISTORY", i, &read_info_log[i]);
+            Timer::after(Duration::from_millis(100)).await;
+            let buf_index = i % MAX_RETAINED_READS;
+            log_read(id, "HISTORY", buf_index, &read_info_log[buf_index]);
         }
     } else {
-        for i in last_history_ix - max_history_size..=last_history_ix {
-            log_read(
-                id,
-                "HISTORY",
-                i % MAX_RETAINED_READS,
-                &read_info_log[i % MAX_RETAINED_READS],
-            );
+        info!("{}: last_history_ix >= max_history_size", id);
+        info!("{}:              {} >= {}", last_history_ix, max_history_size, id);
+        info!(
+            "{}: for i in {}..={}",
+            id,
+            last_history_ix,
+            last_history_ix + MAX_RETAINED_READS - MAX_READS_AFTER_ERROR - 1
+        );
+
+        for i in last_history_ix..=last_history_ix + MAX_RETAINED_READS - MAX_READS_AFTER_ERROR - 1 {
+            Timer::after(Duration::from_millis(100)).await;
+            let buf_index = i % MAX_RETAINED_READS;
+            log_read(id, "HISTORY", buf_index, &read_info_log[buf_index]);
         }
     }
 }
 
-fn log_future_reads(
+async fn log_future_reads(
     id: &str,
     read_info_log: &[ReadInfo; MAX_RETAINED_READS],
     total_reads: usize,
     failed_at_total_reads: usize,
 ) {
     for i in failed_at_total_reads + 1..=total_reads {
-        log_read(
-            id,
-            "FUTURE ",
-            i % MAX_RETAINED_READS,
-            &read_info_log[i % MAX_RETAINED_READS],
-        );
+        Timer::after(Duration::from_millis(100)).await;
+        log_read(id, "FUTURE ", i % MAX_RETAINED_READS, &read_info_log[i % MAX_RETAINED_READS]);
     }
 }
 
@@ -386,10 +582,8 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let mut rng = Rng::new(peripherals.RNG);
 
-    let esp_wifi_ctrl = &*mk_static!(
-        EspWifiController<'static>,
-        init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap()
-    );
+    let esp_wifi_ctrl =
+        &*mk_static!(EspWifiController<'static>, init(timg0.timer0, rng.clone(), peripherals.RADIO_CLK).unwrap());
 
     let (controller, interfaces) = esp_wifi::wifi::new(&esp_wifi_ctrl, peripherals.WIFI).unwrap();
 
@@ -405,12 +599,8 @@ async fn main(spawner: Spawner) {
     let seed = (rng.random() as u64) << 32 | rng.random() as u64;
 
     // Init network stack
-    let (stack, runner) = embassy_net::new(
-        wifi_interface,
-        config,
-        mk_static!(StackResources<3>, StackResources::<3>::new()),
-        seed,
-    );
+    let (stack, runner) =
+        embassy_net::new(wifi_interface, config, mk_static!(StackResources<3>, StackResources::<3>::new()), seed);
 
     let uart_config_0 = Config::default().with_rx(
         RxConfig::default()
@@ -454,20 +644,26 @@ async fn main(spawner: Spawner) {
     spawner.spawn(net_task(runner)).unwrap();
     spawner.spawn(tcp_connector(stack)).unwrap();
 
-    static RX_0_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, u8>> = StaticCell::new();
+    static RX_0_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, bool>> = StaticCell::new();
     let rx_0_ready_signal = &*RX_0_READY_SIGNAL.init(Signal::new());
-    static RX_1_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, u8>> = StaticCell::new();
+    static RX_1_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, bool>> = StaticCell::new();
     let rx_1_ready_signal = &*RX_1_READY_SIGNAL.init(Signal::new());
-    static RX_2_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, u8>> = StaticCell::new();
+    static RX_2_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, bool>> = StaticCell::new();
     let rx_2_ready_signal = &*RX_2_READY_SIGNAL.init(Signal::new());
 
-    static TX_0_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, u8>> = StaticCell::new();
+    static TX_0_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, bool>> = StaticCell::new();
     let tx_0_ready_signal = &*TX_0_READY_SIGNAL.init(Signal::new());
-    static TX_1_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, u8>> = StaticCell::new();
+    static TX_1_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, bool>> = StaticCell::new();
     let tx_1_ready_signal = &*TX_1_READY_SIGNAL.init(Signal::new());
-    static TX_2_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, u8>> = StaticCell::new();
+    static TX_2_READY_SIGNAL: StaticCell<Signal<NoopRawMutex, bool>> = StaticCell::new();
     let tx_2_ready_signal = &*TX_2_READY_SIGNAL.init(Signal::new());
-    //XXX Timer::after(Duration::from_millis(5000)).await;
+
+    static RX_0_INTERRUPTED: StaticCell<Signal<NoopRawMutex, bool>> = StaticCell::new();
+    let rx_0_interrupted = &*RX_0_INTERRUPTED.init(Signal::new());
+    static RX_1_INTERRUPTED: StaticCell<Signal<NoopRawMutex, bool>> = StaticCell::new();
+    let rx_1_interrupted = &*RX_1_INTERRUPTED.init(Signal::new());
+    static RX_2_INTERRUPTED: StaticCell<Signal<NoopRawMutex, bool>> = StaticCell::new();
+    let rx_2_interrupted = &*RX_2_INTERRUPTED.init(Signal::new());
 
     spawner
         .spawn(writer(
@@ -489,6 +685,8 @@ async fn main(spawner: Spawner) {
             length: 0,
             content: [0u8; READ_BUFFER_SIZE],
             rx_error: None,
+            fifo_cnt_before: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0},
+            fifo_cnt_after: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0}
         })
     });
 
@@ -500,6 +698,8 @@ async fn main(spawner: Spawner) {
             length: 0,
             content: [0u8; READ_BUFFER_SIZE],
             rx_error: None,
+            fifo_cnt_before: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0},
+            fifo_cnt_after: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0}
         })
     });
 
@@ -511,41 +711,34 @@ async fn main(spawner: Spawner) {
             length: 0,
             content: [0u8; READ_BUFFER_SIZE],
             rx_error: None,
+            fifo_cnt_before: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0},
+            fifo_cnt_after: FifoCnt{fifo_cnt: 0, rd_addr: 0 , wr_addr: 0}
         })
     });
 
     Timer::after(Duration::from_millis(1000)).await;
     spawner
-        .spawn(reader(
-            rx0,
-            read_info_log_0,
-            "UART_0",
-            &rx_0_ready_signal,
-            &tx_0_ready_signal,
-        ))
+        .spawn(reader(rx0, read_info_log_0, "UART_0", &rx_0_ready_signal, &tx_0_ready_signal, &rx_0_interrupted))
         .unwrap();
     spawner
-        .spawn(reader(
-            rx1,
-            read_info_log_1,
-            "UART_1",
-            &rx_1_ready_signal,
-            &tx_1_ready_signal,
-        ))
+        .spawn(reader(rx1, read_info_log_1, "UART_1", &rx_1_ready_signal, &tx_1_ready_signal, &rx_1_interrupted))
         .unwrap();
     spawner
-        .spawn(reader(
-            rx2,
-            read_info_log_2,
-            "UART_2",
-            &rx_2_ready_signal,
-            &tx_2_ready_signal,
-        ))
+        .spawn(reader(rx2, read_info_log_2, "UART_2", &rx_2_ready_signal, &tx_2_ready_signal, &rx_2_interrupted))
         .unwrap();
     //Timer::after(Duration::from_millis(1000)).await;
 
     loop {
-        Timer::after(Duration::from_millis(10000)).await;
+        let random = rng.random();
+
+        for _ in 0..random & 0x000000FF0 {
+            black_box(())
+        }
+
+        Timer::after(Duration::from_millis((random & 0x000F) as u64 * 100)).await;
+        rx_0_interrupted.signal(true);
+        //rx_0_interrupted.signal(2);
+        //rx_0_interrupted.signal(3);
         info!("Idle");
     }
 }

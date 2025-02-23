@@ -18,6 +18,7 @@ embassy-net = { version = "0.6.0", features = [
 
 embedded-io = "0.6.1"
 embedded-io-async = "0.6.1"
+embassy-futures = "0.1.1"
 esp-alloc = { version = "0.6.0" }
 esp-backtrace = { version = "0.15.0", features = [
   "defmt",
@@ -78,15 +79,15 @@ overflow-checks = false
 
 
 [patch.crates-io]
-esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-esp-wifi = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-esp-alloc = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-esp-println = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-# esp-hal-embassy = { path = "../../esp-rs/esp-hal/esp-hal-embassy" }
-# esp-hal = { path = "../../esp-rs/esp-hal/esp-hal" }
-# esp-wifi = { path = "../../esp-rs/esp-hal/esp-wifi" }
-# esp-alloc = { path = "../../esp-rs/esp-hal/esp-alloc" }
-# esp-backtrace = { path = "../../esp-rs/esp-hal/esp-backtrace" }
-# esp-println = { path = "../../esp-rs/esp-hal/esp-println" }
+# esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
+# esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
+# esp-wifi = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
+# esp-alloc = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
+# esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
+# esp-println = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
+esp-hal-embassy = { path = "../../esp-rs/esp-hal/esp-hal-embassy" }
+esp-hal = { path = "../../esp-rs/esp-hal/esp-hal" }
+esp-wifi = { path = "../../esp-rs/esp-hal/esp-wifi" }
+esp-alloc = { path = "../../esp-rs/esp-hal/esp-alloc" }
+esp-backtrace = { path = "../../esp-rs/esp-hal/esp-backtrace" }
+esp-println = { path = "../../esp-rs/esp-hal/esp-println" }
