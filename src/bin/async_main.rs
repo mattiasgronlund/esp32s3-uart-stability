@@ -355,25 +355,27 @@ async fn reader(
             total_reads += 1;
         }
 
-        rx_ready_signal.signal(false);
-        tx_ready_signal.wait().await;
-        tx_ready_signal.reset();
 
         if let Some(failure) = possible_failure {
+    
             uart_possible_polluted = true;
             for _n in 0..MAX_READS_AFTER_ERROR {
                 total_reads += 1;
                 let buf = &mut read_info_log[total_reads % MAX_RETAINED_READS];
-                buf.called_at = embassy_time::Instant::now();
                 buf.rx_error = None;
                 buf.length = 0;
-
+                buf.called_at = embassy_time::Instant::now();
+                buf.fifo_cnt_before = read_fifo_cnt(&mut rx);
                 match rx.read_buffered(&mut buf.content) {
                     Ok(len) => buf.length = len,
                     Err(e) => buf.rx_error = Some(e),
                 }
+                buf.fifo_cnt_after = read_fifo_cnt(&mut rx);             
                 buf.returned_at = embassy_time::Instant::now();
             }
+            rx_ready_signal.signal(false);
+            tx_ready_signal.wait().await;
+            tx_ready_signal.reset();
 
             match failure.reason {
                 Reason::RxError(rx_error) => {
@@ -386,7 +388,18 @@ async fn reader(
                     }
 
                     log_history_reads(id, &read_info_log, total_reads, failure.at_reads).await;
-                    error!("{}: PROBLEM {}", id, rx_error);
+                    let failed_ix = failure.at_reads % MAX_RETAINED_READS;
+                    let info = &read_info_log[failed_ix];
+                    error!(
+                        "{}: PROBLEM [{}] {=u64:08us}..{=u64:08us} Δ{=u64:06us}s before:{}, after:{}: {}",
+                        id,
+                        failed_ix,
+                        info.called_at.as_micros(),
+                        info.returned_at.as_micros(),
+                        info.returned_at.duration_since(info.called_at).as_micros(),
+                        info.fifo_cnt_before, info.fifo_cnt_after,
+                        rx_error
+                    );
                     log_future_reads(id, &read_info_log, total_reads, failure.at_reads).await;
                 }
                 Reason::Corruption(corruption) => {
@@ -406,6 +419,7 @@ async fn reader(
                     let right_of = &info.content[corruption.pos_in_buffer + 1..info.length];
 
                     log_history_reads(id, &read_info_log, total_reads, failure.at_reads).await;
+
                     error!(
                         "{}: PROBLEM [{}] {=u64:08us}..{=u64:08us} Δ{=u64:06us}s before:{}, after:{}, len={=usize:03} {=[u8]:02X} {=u8:02X}<{=u8:02X}> {=[u8]:02X}",
                         id,
@@ -447,8 +461,8 @@ fn log_read(id: &str, context: &str, row: usize, info: &ReadInfo) {
         for i in 1..info.length {            
             if info.content[i] as usize != prev as usize + 1 {
                 info!("{}: Push range: {}, {}, {}",id, i, info.content[i], prev +1);
-                parts.push(ContinousRange {start: part_start, end: i});
-                part_start = i+1;
+                parts.push(ContinousRange {start: part_start, end: i-1});
+                part_start = i;
                 prev = info.content[i] as usize -1;
             }
             prev+=1;
