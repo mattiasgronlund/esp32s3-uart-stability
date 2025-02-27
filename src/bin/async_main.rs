@@ -175,18 +175,18 @@ struct UartStatistics {
 }
 
 fn read_fifo_cnt(rx: &mut UartRx<'static, Async>) -> FifoCnt {
-    let (fifo_cnt, apb_rx_raddr, rx_waddr) = rx.rx_fifo_count_debug();
-    let calc_cnt =if rx_waddr > apb_rx_raddr {
-        rx_waddr - apb_rx_raddr
-    } else if rx_waddr < apb_rx_raddr {
-        (rx_waddr + 128) - apb_rx_raddr
-    } else if fifo_cnt > 0 {
-        128
-    } else {
-        0
-    };
-    return FifoCnt { fifo_cnt, calc_cnt, apb_rx_raddr, rx_waddr}
-    //return FifoCnt { fifo_cnt:0, apb_rx_raddr:0, rx_waddr:0}
+    // let (fifo_cnt, apb_rx_raddr, rx_waddr) = rx.rx_fifo_count_debug();
+    // let calc_cnt =if rx_waddr > apb_rx_raddr {
+    //     rx_waddr - apb_rx_raddr
+    // } else if rx_waddr < apb_rx_raddr {
+    //     (rx_waddr + 128) - apb_rx_raddr
+    // } else if fifo_cnt > 0 {
+    //     128
+    // } else {
+    //     0
+    // };
+    // return FifoCnt { fifo_cnt, calc_cnt, apb_rx_raddr, rx_waddr}
+    return FifoCnt { fifo_cnt:0, calc_cnt: 0, apb_rx_raddr:0, rx_waddr:0}
 
 }
 
