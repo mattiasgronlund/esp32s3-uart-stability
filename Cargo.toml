@@ -19,15 +19,19 @@ embassy-net = { version = "0.6.0", features = [
 embedded-io = "0.6.1"
 embedded-io-async = "0.6.1"
 embassy-futures = "0.1.1"
-esp-alloc = { version = "0.6.0" }
-esp-backtrace = { version = "0.15.0", features = [
+esp-alloc = { version = "0.7.0" }
+esp-backtrace = { version = "0.15.1", features = [
   "defmt",
   "esp32s3",
   "exception-handler",
   "panic-handler",
 ] }
-esp-hal = { version = "0.23.1", features = ["defmt", "esp32s3", "unstable"] }
-esp-wifi = { version = "0.12.0", default-features = false, features = [
+esp-hal = { version = "1.0.0-beta.0", features = [
+  "defmt",
+  "esp32s3",
+  "unstable",
+] }
+esp-wifi = { version = "0.13.0", default-features = false, features = [
   #"defmt",
   "esp-alloc",
   "esp32s3",
@@ -60,7 +64,7 @@ embassy-time = { version = "0.4.0", features = [
   "generic-queue-8",
   "defmt-timestamp-uptime",
 ] }
-esp-hal-embassy = { version = "0.6.0", features = ["esp32s3"] }
+esp-hal-embassy = { version = "0.7.0", features = ["esp32s3"] }
 static_cell = { version = "2.1.0", features = ["nightly"] }
 
 [profile.dev]
@@ -79,12 +83,12 @@ overflow-checks = false
 
 
 [patch.crates-io]
-# esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-# esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-# esp-wifi = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-# esp-alloc = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-# esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
-# esp-println = { git = "https://github.com/esp-rs/esp-hal", rev = "4d075751ae6cc697a15ca936a912351632a37c4c" }
+# esp-hal-embassy = { git = "https://github.com/esp-rs/esp-hal", rev = "ae585da" }
+# esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "ae585da" }
+# esp-wifi = { git = "https://github.com/esp-rs/esp-hal", rev = "ae585da" }
+# esp-alloc = { git = "https://github.com/esp-rs/esp-hal", rev = "ae585da" }
+# esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", rev = "ae585da" }
+# esp-println = { git = "https://github.com/esp-rs/esp-hal", rev = "ae585da" }
 esp-hal-embassy = { path = "../../esp-rs/esp-hal/esp-hal-embassy" }
 esp-hal = { path = "../../esp-rs/esp-hal/esp-hal" }
 esp-wifi = { path = "../../esp-rs/esp-hal/esp-wifi" }

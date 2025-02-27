@@ -144,6 +144,7 @@ struct Failure {
 #[derive(defmt::Format)]
 struct FifoCnt {
     fifo_cnt: u16,
+    calc_cnt: u16,
     apb_rx_raddr: u16,
     rx_waddr: u16,
 }
@@ -175,12 +176,23 @@ struct UartStatistics {
 
 fn read_fifo_cnt(rx: &mut UartRx<'static, Async>) -> FifoCnt {
     let (fifo_cnt, apb_rx_raddr, rx_waddr) = rx.rx_fifo_count_debug();
-    return FifoCnt { fifo_cnt, apb_rx_raddr, rx_waddr}
+    let calc_cnt =if rx_waddr > apb_rx_raddr {
+        rx_waddr - apb_rx_raddr
+    } else if rx_waddr < apb_rx_raddr {
+        (rx_waddr + 128) - apb_rx_raddr
+    } else if fifo_cnt > 0 {
+        128
+    } else {
+        0
+    };
+    return FifoCnt { fifo_cnt, calc_cnt, apb_rx_raddr, rx_waddr}
+    //return FifoCnt { fifo_cnt:0, apb_rx_raddr:0, rx_waddr:0}
+
 }
 
 async fn read_garbage(id: &str, rx: &mut UartRx<'static, Async>) {
     let mut empty_reads = 0;
-    info!("{}: Before reading garbage, fifo_cnt={}", id, rx.rx_fifo_count_debug());
+    info!("{}: Before reading garbage, fifo_cnt={}", id, read_fifo_cnt(rx));
     loop {
         let mut buffer: [u8; 256] = [0; 256];
         let garbage = rx.read_buffered(&mut buffer);        
@@ -198,7 +210,7 @@ async fn read_garbage(id: &str, rx: &mut UartRx<'static, Async>) {
                             len,
                             buffer[0..len]
                         );                        
-                        info!("{}: After reading garbage, fifo_cnt={}", id, rx.rx_fifo_count_debug());
+                        info!("{}: After reading garbage, fifo_cnt={}", id, read_fifo_cnt(rx));
                         break;
                     }
                 } else {
@@ -460,7 +472,7 @@ fn log_read(id: &str, context: &str, row: usize, info: &ReadInfo) {
         let mut part_start = 0;        
         for i in 1..info.length {            
             if info.content[i] as usize != prev as usize + 1 {
-                info!("{}: Push range: {}, {}, {}",id, i, info.content[i], prev +1);
+                // info!("{}: Push range: {}, {}, {}",id, i, info.content[i], prev +1);
                 parts.push(ContinousRange {start: part_start, end: i-1});
                 part_start = i;
                 prev = info.content[i] as usize -1;
@@ -699,8 +711,8 @@ async fn main(spawner: Spawner) {
             length: 0,
             content: [0u8; READ_BUFFER_SIZE],
             rx_error: None,
-            fifo_cnt_before: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0},
-            fifo_cnt_after: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0}
+            fifo_cnt_before: FifoCnt{fifo_cnt: 0, calc_cnt:0, apb_rx_raddr: 0 , rx_waddr: 0},
+            fifo_cnt_after: FifoCnt{fifo_cnt: 0, calc_cnt:0, apb_rx_raddr: 0 , rx_waddr: 0}
         })
     });
 
@@ -712,8 +724,8 @@ async fn main(spawner: Spawner) {
             length: 0,
             content: [0u8; READ_BUFFER_SIZE],
             rx_error: None,
-            fifo_cnt_before: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0},
-            fifo_cnt_after: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0}
+            fifo_cnt_before: FifoCnt{fifo_cnt: 0, calc_cnt:0, apb_rx_raddr: 0 , rx_waddr: 0},
+            fifo_cnt_after: FifoCnt{fifo_cnt: 0, calc_cnt:0, apb_rx_raddr: 0 , rx_waddr: 0}
         })
     });
 
@@ -725,8 +737,8 @@ async fn main(spawner: Spawner) {
             length: 0,
             content: [0u8; READ_BUFFER_SIZE],
             rx_error: None,
-            fifo_cnt_before: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0},
-            fifo_cnt_after: FifoCnt{fifo_cnt: 0, apb_rx_raddr: 0 , rx_waddr: 0}
+            fifo_cnt_before: FifoCnt{fifo_cnt: 0, calc_cnt:0, apb_rx_raddr: 0 , rx_waddr: 0},
+            fifo_cnt_after: FifoCnt{fifo_cnt: 0, calc_cnt:0, apb_rx_raddr: 0 , rx_waddr: 0}
         })
     });
 
